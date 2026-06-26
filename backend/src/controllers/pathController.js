@@ -1,19 +1,13 @@
-// src/controllers/pathController.js
-
-const buildGraph = require("../utils/buildGraph");
+﻿const buildGraph = require("../utils/buildGraph");
 const dijkstra = require("../algorithms/dijkstra");
 const campusData = require("../utils/campusData");
-const haversine = require("../utils/haversine");
-const {
-  calculateWalkingTime,
-  calculateArrivalTime
-} = require("../utils/walkingTime");
+const { buildNavigation } = require("../utils/navigationEngine");
 
 const getShortestPath = (req, res) => {
   try {
     const { from, to } = req.query;
 
-    // ── Validation ───────────────────────────────
+    // ── Validation ───────────────────────────
     if (!from || !to) {
       return res.status(400).json({
         success: false,
@@ -29,7 +23,7 @@ const getShortestPath = (req, res) => {
       });
     }
 
-    // ── Build Graph ──────────────────────────────
+    // ── Build Graph ──────────────────────────
     const graph = buildGraph();
 
     if (!graph[from]) {
@@ -46,7 +40,7 @@ const getShortestPath = (req, res) => {
       });
     }
 
-    // ── Run Dijkstra ─────────────────────────────
+    // ── Run Dijkstra ─────────────────────────
     const result = dijkstra(graph, from, to);
 
     if (result.distance === Infinity || result.path.length === 0) {
@@ -56,77 +50,34 @@ const getShortestPath = (req, res) => {
       });
     }
 
-    // ── Location Lookup Map ──────────────────────
+    // ── Map IDs to full location objects ─────
     const locationMap = {};
     campusData.forEach(loc => {
       locationMap[loc.id] = loc;
     });
 
-    // ── Build Detailed Path ──────────────────────
-    const detailedPath = result.path.map((id, index) => {
-      const loc = locationMap[id];
+    const pathLocations = result.path.map(id => locationMap[id]);
 
-      let segmentDistanceRaw = 0;
-      let segmentDistance = "0 m";
+    // ── Run Navigation Engine ────────────────
+    const navigation = buildNavigation(pathLocations);
 
-      if (index > 0) {
-        const prevLoc = locationMap[result.path[index - 1]];
-        segmentDistanceRaw = haversine(
-          prevLoc.lat,
-          prevLoc.lng,
-          loc.lat,
-          loc.lng
-        );
-        segmentDistance = segmentDistanceRaw >= 1000
-          ? `${(segmentDistanceRaw / 1000).toFixed(2)} km`
-          : `${segmentDistanceRaw.toFixed(0)} m`;
-      }
-
-      return {
-        id: id,
-        name: loc?.name || "Unknown",
-        type: loc?.type || "other",
-        lat: loc?.lat,
-        lng: loc?.lng,
-        segmentDistance: segmentDistance,
-        segmentDistanceRaw: segmentDistanceRaw
-      };
-    });
-
-    // ── Walking Time ─────────────────────────────
-    const walkingTime = calculateWalkingTime(result.distance);
-    const arrivalTime = calculateArrivalTime(walkingTime.minutes);
-
-    // ── Format Total Distance ────────────────────
-    const formattedDistance = result.distance >= 1000
-      ? `${(result.distance / 1000).toFixed(2)} km`
-      : `${result.distance.toFixed(0)} m`;
-
-    // ── Final Response ───────────────────────────
+    // ── Send Response ────────────────────────
     res.status(200).json({
       success: true,
       route: {
         from: {
           id: from,
-          name: locationMap[from]?.name,
-          type: locationMap[from]?.type
+          name: locationMap[from].name,
+          type: locationMap[from].type
         },
         to: {
           id: to,
-          name: locationMap[to]?.name,
-          type: locationMap[to]?.type
+          name: locationMap[to].name,
+          type: locationMap[to].type
         }
       },
-      summary: {
-        totalDistance: formattedDistance,
-        totalDistanceRaw: result.distance,
-        walkingTime: walkingTime.formatted,
-        walkingSpeed: walkingTime.speed,
-        stops: result.path.length,
-        steps: result.path.length - 1,
-        estimatedArrival: arrivalTime
-      },
-      path: detailedPath
+      summary: navigation.summary,
+      instructions: navigation.instructions
     });
 
   } catch (error) {
